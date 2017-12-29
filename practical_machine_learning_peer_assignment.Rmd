@@ -1,0 +1,146 @@
+---
+title: 'Practical Machine Learning: Peer Assignment'
+author: "Matt Hartman"
+output:
+  html_document:
+    df_print: paged
+---
+
+## Background
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+## Load Data
+
+Load necessary libraries and data sets. 
+```{r}
+setwd("I:/CI05780/Matt/coursera_data_science_specialization/practical_machine_learning")
+
+library(caret)
+library(randomForest)
+
+train <- read.csv("pml-training.csv", na.strings = c("", "#DIV/0!", "NA"))
+test <- read.csv("pml-testing.csv", na.strings = c("", "#DIV/0!", "NA"))
+
+dim(train) #Observe number of rows and columns
+dim(test) #Observe number of rows and columns
+barplot(table(train$classe)) #Observe distribution of target variable
+```
+
+## Preprocessing
+
+Drop variables that refer to a specific user and the timing of the test.
+```{r}
+data <- train[,8:160]
+test <- test[,c(8:160)]
+```
+
+Remove columns with less than 100% fill rate
+```{r}
+miss_cols <- colnames(data)[colSums(is.na(data)) > 0] #Find columns with missing values
+num_rows <- nrow(data) #Number of rows in data set
+fill_rate <- sapply(data[,miss_cols], function(x) 1-sum(is.na(x))/num_rows) #Calculate fill rate for each column
+
+drops <- names(fill_rate[fill_rate < 1]) #Columns below requirement of 100% fill rate
+```
+
+```{r}
+training <- data[, !colnames(data) %in% drops]
+test <- test[, !colnames(test) %in% drops]
+```
+
+
+## Model {.tabset}
+
+### Rpart
+
+Fit tree based model using Rpart.
+```{r}
+#Set seed for reproducibility
+set.seed(42)
+
+#Split training data set into train and validation sets
+inTrain <- createDataPartition(y = data$classe, p = 0.75, list = FALSE)
+training <- training[inTrain,]
+validation <- training[-inTrain,]
+dim(training); dim(validation)
+
+#Create train control object to set cross validation parameters
+myControl <- trainControl(method = "CV",
+                          number = 3,
+                          allowParallel = TRUE,
+                          verboseIter = FALSE)
+
+fit_rpart <- train(classe ~ ., data = training, method = "rpart", trControl = myControl)
+fit_rpart
+```
+
+### GBM
+
+Fit generalized boosted regression model.
+```{r}
+fit_gbm <- train(classe ~ ., data = training, method = "gbm", trControl = myControl)
+fit_gbm
+```
+
+### Random Forest
+
+Fit random forest model.
+```{r}
+fit_rf <- train(classe ~ ., data = training, method = "rf", trControl = myControl)
+fit_rf
+```
+
+
+## Model Performance {.tabset}
+
+Collect resampling results from each model to compare model performance.
+```{r}
+model_list <- list(rpart = fit_rpart, gbm = fit_gbm, rf = fit_rf)
+
+resamps <- resamples(model_list)
+resamps
+```
+### Resample Summary
+
+View summary of resample results. The random forest model appears to have the highest accuracy.
+```{r, fig.width=12}
+summary(resamps)
+```
+
+### Resample Dotplot
+
+The dotplot visually confirms that the random forest model produces the highest accuracy.
+```{r}
+dotplot(resamps, metric = "Accuracy")
+```
+
+
+
+## Predictions
+
+Predict the target variable in the validation set using the random forest model. The accuracy is 100% so hopefully we haven't overfit. We'll apply the model to the hold out set and submit to check our performance.
+```{r}
+predictions <- predict(fit_rf,  validation)
+confusionMatrix(predictions, validation$classe)
+```
+
+## Variable Importance
+
+Visualize the variable importance to determine which fields are most predictive. Roll_belt is the most predictive followed by pitch_forearm and yaw_belt.
+```{r}
+imp <- varImp(fit_rf)
+plot(imp, top = 20, main = "Random Forest: Variable Importance")
+```
+
+## Expected Out of Sample Error
+The expected out of sample error is calculated as 1 - accuracy of validation set. Therefore we expect the error rate to be 0% when predicting the test set target variables.
+
+## Predictions
+
+Predict the target variable in the test set.
+```{r}
+pred <- predict(fit_rf, test)
+
+pred
+```
+
